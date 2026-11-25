@@ -1,7 +1,9 @@
 import hmac
 import html
+import json
 import time
 from datetime import datetime
+from pathlib import Path
 
 import streamlit as st
 
@@ -26,12 +28,31 @@ except Exception:
 
 
 # ---------- مخزن الرسائل (مشترك بين كل المستخدمين) ----------
+DATA_FILE = Path(__file__).with_name("messages_backup.json")
+
+
 @st.cache_resource
 def get_store():
-    return {"messages": [], "next_id": 0, "fails": 0, "locked_until": 0.0}
+    msgs = []
+    try:  # يرجّع الرسائل المحفوظة لو الملف موجود
+        msgs = json.loads(DATA_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    nid = max([m.get("id", 0) for m in msgs], default=0)
+    return {"messages": msgs, "next_id": nid, "fails": 0, "locked_until": 0.0}
 
 
 store = get_store()
+
+
+def save():
+    """حفظ الرسائل في ملف (يساعد لو التطبيق انعاد تشغيله، بس مو مضمون 100%)"""
+    try:
+        DATA_FILE.write_text(
+            json.dumps(store["messages"], ensure_ascii=False), encoding="utf-8"
+        )
+    except Exception:
+        pass
 
 # ---------- زر الوضع الليلي / النهاري ----------
 dark = st.toggle("🌙 الوضع الليلي", key="dark_mode")
@@ -163,6 +184,7 @@ if sent:
                 "replies": [],
             }
         )
+        save()
     else:
         st.warning("اكتب شي قبل لا ترسل 😅")
 
@@ -177,9 +199,17 @@ def find_admin(code):
 with st.expander("🔐 القائد"):
     if st.session_state.get("admin"):
         st.success(f"أهلاً {st.session_state['admin']} 👑")
+        st.download_button(
+            "⬇️ نسخة احتياطية من الرسائل",
+            data=json.dumps(store["messages"], ensure_ascii=False, indent=2),
+            file_name="messages_backup.json",
+            mime="application/json",
+            use_container_width=True,
+        )
         c1, c2 = st.columns(2)
         if c1.button("🗑️ مسح كل الرسائل", use_container_width=True):
             store["messages"].clear()
+            save()
             st.rerun()
         if c2.button("خروج", use_container_width=True):
             st.session_state["admin"] = None
@@ -226,6 +256,13 @@ def show_messages():
             unsafe_allow_html=True,
         )
 
+        # حذف رسالة وحدة (للقائد بس)
+        if st.session_state.get("admin"):
+            if st.button("🗑️ حذف هذي الرسالة", key=f"d_{mid}", use_container_width=True):
+                store["messages"] = [x for x in store["messages"] if x["id"] != mid]
+                save()
+                st.rerun(scope="fragment")
+
         # التفاعل بالإيموجي (ضغطة تضيف، وضغطة ثانية تلغي)
         cols = st.columns(len(EMOJIS))
         for col, e in zip(cols, EMOJIS):
@@ -238,6 +275,7 @@ def show_messages():
                 else:
                     mine.add((mid, e))
                     m["reactions"][e] = n + 1
+                save()
                 st.rerun(scope="fragment")
 
         # الردود
@@ -259,6 +297,7 @@ def show_messages():
                                 "name": current_name(),
                             }
                         )
+                        save()
                         st.rerun(scope="fragment")
 
 
