@@ -206,12 +206,7 @@ with st.expander("🔐 القائد"):
             mime="application/json",
             use_container_width=True,
         )
-        c1, c2 = st.columns(2)
-        if c1.button("🗑️ مسح كل الرسائل", use_container_width=True):
-            store["messages"].clear()
-            save()
-            st.rerun()
-        if c2.button("خروج", use_container_width=True):
+        if st.button("خروج", use_container_width=True):
             st.session_state["admin"] = None
             st.rerun()
     else:
