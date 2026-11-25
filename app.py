@@ -104,6 +104,7 @@ st.markdown(
     .stButton button {{ padding: .15rem .3rem; min-height: 2rem; }}
     .reply {{ background: {CARD}; border-radius: 10px; padding: 6px 10px; margin: 4px 0; font-size: 14px; }}
     .who {{ font-weight: 700; font-size: 13px; opacity: .85; margin-bottom: 2px; }}
+    div[data-testid="stColumn"]:has(.reply) {{ flex: 6 1 0 !important; }}
     .box {{
         background: {MAIN_COLOR};
         color: white !important;
@@ -182,9 +183,11 @@ if sent:
                 "name": current_name(),
                 "reactions": {},
                 "replies": [],
+                "status": "pending",   # وارد، بانتظار موافقة القائد
             }
         )
         save()
+        st.success("وصلت رسالتك ✅ وبتظهر بعد ما القائد يوافق عليها")
     else:
         st.warning("اكتب شي قبل لا ترسل 😅")
 
@@ -228,6 +231,35 @@ with st.expander("🔐 القائد"):
                     st.error("الرمز غلط ❌")
 
 
+# ---------- الرسائل الواردة (للقائد بس) ----------
+@st.fragment(run_every=5)
+def show_inbox():
+    pending = [m for m in store["messages"] if m.get("status") == "pending"]
+    st.subheader(f"📥 الرسائل الواردة ({len(pending)})")
+    if not pending:
+        st.caption("ما فيه رسائل جديدة")
+        return
+    for m in pending:
+        mid = m["id"]
+        st.markdown(
+            f'<div class="msg"><div class="who">{who(m.get("name"))}</div>'
+            f'{html.escape(m["text"])}<div class="time">{m["time"]}</div></div>',
+            unsafe_allow_html=True,
+        )
+        c1, c2 = st.columns(2)
+        if c1.button("✅ نشر", key=f"pub_{mid}", use_container_width=True):
+            m["status"] = "published"
+            save()
+            st.rerun()
+        if c2.button("🗑️ حذف", key=f"rej_{mid}", use_container_width=True):
+            store["messages"] = [x for x in store["messages"] if x["id"] != mid]
+            save()
+            st.rerun()
+
+
+if st.session_state.get("admin"):
+    show_inbox()
+
 st.divider()
 st.subheader("الرسائل")
 
@@ -238,9 +270,9 @@ EMOJIS = ["👍", "😂", "❤️", "🔥", "😮"]
 
 @st.fragment(run_every=5)
 def show_messages():
-    msgs = store["messages"]
+    msgs = [m for m in store["messages"] if m.get("status", "published") == "published"]
     if not msgs:
-        st.info("ما فيه رسائل للحين، كن أول واحد يرسل!")
+        st.info("ما فيه رسائل منشورة للحين، كن أول واحد يرسل!")
         return
     mine = st.session_state.setdefault("my_reacts", set())
     for m in reversed(msgs):  # الأحدث فوق
@@ -276,17 +308,30 @@ def show_messages():
         # الردود
         with st.expander(f"💬 الردود ({len(m['replies'])})"):
             for r in m["replies"]:
-                st.markdown(
+                if "id" not in r:  # ردود قديمة بدون رقم
+                    store["next_id"] += 1
+                    r["id"] = store["next_id"]
+                reply_html = (
                     f'<div class="reply"><div class="who">{who(r.get("name"))}</div>'
-                    f'{html.escape(r["text"])}<div class="time">{r["time"]}</div></div>',
-                    unsafe_allow_html=True,
+                    f'{html.escape(r["text"])}<div class="time">{r["time"]}</div></div>'
                 )
+                if st.session_state.get("admin"):
+                    rc1, rc2 = st.columns([6, 1])
+                    rc1.markdown(reply_html, unsafe_allow_html=True)
+                    if rc2.button("🗑️", key=f"dr_{mid}_{r['id']}", help="حذف الرد"):
+                        m["replies"] = [x for x in m["replies"] if x.get("id") != r["id"]]
+                        save()
+                        st.rerun(scope="fragment")
+                else:
+                    st.markdown(reply_html, unsafe_allow_html=True)
             with st.form(f"rf_{mid}", clear_on_submit=True):
                 rt = st.text_input("اكتب ردك", max_chars=200, key=f"rt_{mid}")
                 if st.form_submit_button("رد", use_container_width=True):
                     if rt.strip():
+                        store["next_id"] += 1
                         m["replies"].append(
                             {
+                                "id": store["next_id"],
                                 "text": rt.strip(),
                                 "time": datetime.now().strftime("%H:%M"),
                                 "name": current_name(),
