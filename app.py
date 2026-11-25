@@ -13,10 +13,8 @@ MAX_LEN = 500
 
 # القادة ورموزهم (الأفضل تحطها في Streamlit Secrets بدل الكود، شوف الشرح)
 DEFAULT_ADMINS = {
-    "4839": "أبو داحم",
     "3093": "الوليد",
     "9809": "BLACK",
-    "6472": "فطومه",
 }
 try:
     ADMINS = dict(st.secrets["ADMINS"])   # شكلها في Secrets: [ADMINS]  1234 = "الاسم"
@@ -111,6 +109,10 @@ st.markdown('<div class="bubbles"><span style="left:43%;font-size:22px;animation
 # ---------- المربعات العلوية ----------
 st.markdown(
     f'<div class="box">هنا تمزح وتلعب وتقول اللي بخاطرك<br>وانت مجهول 🎭</div>',
+    unsafe_allow_html=True,
+)
+st.markdown(
+    '<div class="box">منصة رسائل مجهولة خاصة في مزح ولعب</div>',
     unsafe_allow_html=True,
 )
 st.markdown(
