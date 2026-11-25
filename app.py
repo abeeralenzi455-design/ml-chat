@@ -5,6 +5,8 @@ from datetime import datetime
 
 import streamlit as st
 
+st.set_page_config(page_title="مزح ولعب", page_icon="💬", layout="centered")
+
 # ---------- الإعدادات ----------
 PLATFORM_NAME = "mL"
 ROOM_ID = "311130"
@@ -21,13 +23,12 @@ try:
 except Exception:
     ADMINS = DEFAULT_ADMINS
 
-st.set_page_config(page_title="مزح ولعب", page_icon="💬", layout="centered")
 
 
 # ---------- مخزن الرسائل (مشترك بين كل المستخدمين) ----------
 @st.cache_resource
 def get_store():
-    return {"messages": [], "fails": 0, "locked_until": 0.0}
+    return {"messages": [], "next_id": 0, "fails": 0, "locked_until": 0.0}
 
 
 store = get_store()
@@ -76,6 +77,12 @@ st.markdown(
     .stButton button, div[data-testid="stFormSubmitButton"] button {{
         background: {MAIN_COLOR}; color: white; border: none; border-radius: 12px;
     }}
+    div[data-testid="stHorizontalBlock"] {{ flex-wrap: nowrap !important; gap: .3rem !important; }}
+    div[data-testid="stColumn"] {{ min-width: 0 !important; flex: 1 1 0 !important; width: auto !important; }}
+    .stButton button p, div[data-testid="stFormSubmitButton"] button p {{ color: white !important; }}
+    .stButton button {{ padding: .15rem .3rem; min-height: 2rem; }}
+    .reply {{ background: {CARD}; border-radius: 10px; padding: 6px 10px; margin: 4px 0; font-size: 14px; }}
+    .who {{ font-weight: 700; font-size: 13px; opacity: .85; margin-bottom: 2px; }}
     .box {{
         background: {MAIN_COLOR};
         color: white !important;
@@ -120,16 +127,41 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# ---------- الاسم (اختياري) ----------
+use_name = st.toggle("✍️ أكتب باسمي (بدل مجهول)", key="use_name")
+if use_name:
+    st.text_input("اسمك", max_chars=20, key="my_name", placeholder="مثلاً: سعود")
+
+
+def current_name():
+    if st.session_state.get("use_name"):
+        n = (st.session_state.get("my_name") or "").strip()
+        return n or None
+    return None
+
+
+def who(name):
+    return f"👤 {html.escape(name)}" if name else "🕵️ مجهول"
+
+
 # ---------- مربع كتابة الرسالة ----------
 with st.form("msg_form", clear_on_submit=True):
-    text = st.text_area("اكتب رسالتك (مجهولة 🕵️)", max_chars=MAX_LEN, height=100)
+    text = st.text_area("اكتب رسالتك", max_chars=MAX_LEN, height=100)
     sent = st.form_submit_button("إرسال", use_container_width=True)
 
 if sent:
     clean = text.strip()
     if clean:
+        store["next_id"] += 1
         store["messages"].append(
-            {"text": clean, "time": datetime.now().strftime("%H:%M")}
+            {
+                "id": store["next_id"],
+                "text": clean,
+                "time": datetime.now().strftime("%H:%M"),
+                "name": current_name(),
+                "reactions": {},
+                "replies": [],
+            }
         )
     else:
         st.warning("اكتب شي قبل لا ترسل 😅")
@@ -175,19 +207,59 @@ st.divider()
 st.subheader("الرسائل")
 
 
-# ---------- عرض الرسائل (تتحدث تلقائيًا كل 3 ثواني) ----------
-@st.fragment(run_every=3)
+# ---------- عرض الرسائل (تتحدث تلقائيًا كل 5 ثواني) ----------
+EMOJIS = ["👍", "😂", "❤️", "🔥", "😮"]
+
+
+@st.fragment(run_every=5)
 def show_messages():
     msgs = store["messages"]
     if not msgs:
         st.info("ما فيه رسائل للحين، كن أول واحد يرسل!")
         return
+    mine = st.session_state.setdefault("my_reacts", set())
     for m in reversed(msgs):  # الأحدث فوق
+        mid = m["id"]
         st.markdown(
-            f'<div class="msg">{html.escape(m["text"])}'
-            f'<div class="time">{m["time"]}</div></div>',
+            f'<div class="msg"><div class="who">{who(m.get("name"))}</div>'
+            f'{html.escape(m["text"])}<div class="time">{m["time"]}</div></div>',
             unsafe_allow_html=True,
         )
+
+        # التفاعل بالإيموجي (ضغطة تضيف، وضغطة ثانية تلغي)
+        cols = st.columns(len(EMOJIS))
+        for col, e in zip(cols, EMOJIS):
+            n = m["reactions"].get(e, 0)
+            label = f"{e} {n}" if n else e
+            if col.button(label, key=f"r_{mid}_{e}", use_container_width=True):
+                if (mid, e) in mine:
+                    mine.discard((mid, e))
+                    m["reactions"][e] = max(0, n - 1)
+                else:
+                    mine.add((mid, e))
+                    m["reactions"][e] = n + 1
+                st.rerun(scope="fragment")
+
+        # الردود
+        with st.expander(f"💬 الردود ({len(m['replies'])})"):
+            for r in m["replies"]:
+                st.markdown(
+                    f'<div class="reply"><div class="who">{who(r.get("name"))}</div>'
+                    f'{html.escape(r["text"])}<div class="time">{r["time"]}</div></div>',
+                    unsafe_allow_html=True,
+                )
+            with st.form(f"rf_{mid}", clear_on_submit=True):
+                rt = st.text_input("اكتب ردك", max_chars=200, key=f"rt_{mid}")
+                if st.form_submit_button("رد", use_container_width=True):
+                    if rt.strip():
+                        m["replies"].append(
+                            {
+                                "text": rt.strip(),
+                                "time": datetime.now().strftime("%H:%M"),
+                                "name": current_name(),
+                            }
+                        )
+                        st.rerun(scope="fragment")
 
 
 show_messages()
