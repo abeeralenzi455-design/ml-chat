@@ -1,4 +1,6 @@
+import hmac
 import html
+import time
 from datetime import datetime
 
 import streamlit as st
@@ -9,13 +11,25 @@ ROOM_ID = "311130"
 MAIN_COLOR = "#1ABC9C"   # غيّر اللون من هنا
 MAX_LEN = 500
 
+# القادة ورموزهم (الأفضل تحطها في Streamlit Secrets بدل الكود، شوف الشرح)
+DEFAULT_ADMINS = {
+    "4839": "أبو داحم",
+    "3093": "الوليد",
+    "9809": "BLACK",
+    "6472": "فطومه",
+}
+try:
+    ADMINS = dict(st.secrets["ADMINS"])   # شكلها في Secrets: [ADMINS]  1234 = "الاسم"
+except Exception:
+    ADMINS = DEFAULT_ADMINS
+
 st.set_page_config(page_title=PLATFORM_NAME, page_icon="💬", layout="centered")
 
 
 # ---------- مخزن الرسائل (مشترك بين كل المستخدمين) ----------
 @st.cache_resource
 def get_store():
-    return {"messages": []}
+    return {"messages": [], "fails": 0, "locked_until": 0.0}
 
 
 store = get_store()
@@ -94,6 +108,43 @@ if sent:
         )
     else:
         st.warning("اكتب شي قبل لا ترسل 😅")
+
+# ---------- لوحة القائد (مسح الرسائل) ----------
+def find_admin(code):
+    for k, name in ADMINS.items():
+        if hmac.compare_digest(str(k), code):
+            return name
+    return None
+
+
+with st.expander("🔐 القائد"):
+    if st.session_state.get("admin"):
+        st.success(f"أهلاً {st.session_state['admin']} 👑")
+        c1, c2 = st.columns(2)
+        if c1.button("🗑️ مسح كل الرسائل", use_container_width=True):
+            store["messages"].clear()
+            st.rerun()
+        if c2.button("خروج", use_container_width=True):
+            st.session_state["admin"] = None
+            st.rerun()
+    else:
+        code = st.text_input("الرمز", type="password", max_chars=4, key="admin_code")
+        if st.button("دخول", use_container_width=True):
+            if time.time() < store["locked_until"]:
+                st.error("محاولات كثيرة، انتظر دقيقة ⏳")
+            else:
+                name = find_admin(code.strip())
+                if name:
+                    store["fails"] = 0
+                    st.session_state["admin"] = name
+                    st.rerun()
+                else:
+                    store["fails"] += 1
+                    if store["fails"] >= 10:
+                        store["locked_until"] = time.time() + 60
+                        store["fails"] = 0
+                    st.error("الرمز غلط ❌")
+
 
 st.divider()
 st.subheader("الرسائل")
