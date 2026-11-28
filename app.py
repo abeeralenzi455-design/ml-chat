@@ -5,6 +5,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import requests
 import streamlit as st
 
 st.set_page_config(page_title="مزح ولعب", page_icon="💬", layout="centered")
@@ -28,31 +29,81 @@ except Exception:
 
 
 # ---------- مخزن الرسائل (مشترك بين كل المستخدمين) ----------
+# الحفظ الدائم في Supabase (قاعدة بيانات مجانية) عشان الرسائل ما تضيع
+# لو ما حطيت المفاتيح في Secrets يشتغل بالذاكرة + ملف (مؤقت)
 DATA_FILE = Path(__file__).with_name("messages_backup.json")
+
+
+def _sb():
+    """إعدادات Supabase من Secrets (أو None لو ما انحطت)"""
+    try:
+        url = str(st.secrets["SUPABASE_URL"]).rstrip("/")
+        key = str(st.secrets["SUPABASE_KEY"])
+    except Exception:
+        return None
+    headers = {"apikey": key, "Content-Type": "application/json"}
+    if not key.startswith("sb_"):
+        headers["Authorization"] = f"Bearer {key}"
+    return url, headers
+
+
+def load_messages():
+    cfg = _sb()
+    if cfg:
+        url, headers = cfg
+        # لو فشل الاتصال نرفع خطأ (ما نكمل بقائمة فاضية عشان ما نمسح البيانات)
+        r = requests.get(
+            f"{url}/rest/v1/store?id=eq.1&select=data", headers=headers, timeout=10
+        )
+        r.raise_for_status()
+        rows = r.json()
+        return rows[0]["data"] if rows else []
+    try:
+        return json.loads(DATA_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return []
 
 
 @st.cache_resource
 def get_store():
-    msgs = []
-    try:  # يرجّع الرسائل المحفوظة لو الملف موجود
-        msgs = json.loads(DATA_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        pass
-    nid = max([m.get("id", 0) for m in msgs], default=0)
+    msgs = load_messages()
+    nid = 0
+    for m in msgs:
+        nid = max(nid, m.get("id", 0), *[r.get("id", 0) for r in m.get("replies", [])])
     return {"messages": msgs, "next_id": nid, "fails": 0, "locked_until": 0.0}
 
 
-store = get_store()
+try:
+    store = get_store()
+except Exception:
+    st.error("تعذر الاتصال بقاعدة البيانات، جرّب بعد شوي 🙏")
+    st.stop()
 
 
 def save():
-    """حفظ الرسائل في ملف (يساعد لو التطبيق انعاد تشغيله، بس مو مضمون 100%)"""
+    """يحفظ الرسائل في Supabase (ونسخة في ملف)"""
+    cfg = _sb()
+    if cfg:
+        url, headers = cfg
+        try:
+            r = requests.post(
+                f"{url}/rest/v1/store",
+                headers={**headers, "Prefer": "resolution=merge-duplicates,return=minimal"},
+                data=json.dumps(
+                    [{"id": 1, "data": store["messages"]}], ensure_ascii=False
+                ).encode("utf-8"),
+                timeout=10,
+            )
+            r.raise_for_status()
+        except Exception:
+            st.toast("⚠️ تعذر حفظ الرسائل في قاعدة البيانات")
     try:
         DATA_FILE.write_text(
             json.dumps(store["messages"], ensure_ascii=False), encoding="utf-8"
         )
     except Exception:
         pass
+
 
 # ---------- زر الوضع الليلي / النهاري ----------
 dark = st.toggle("🌙 الوضع الليلي", key="dark_mode")
